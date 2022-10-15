@@ -1,18 +1,23 @@
 use configparser::ini::Ini;
 use simple_error::SimpleError;
-use std::collections::HashMap;
+use std::{
+    collections::HashMap,
+    error::Error,
+    path::{Path, PathBuf},
+};
 
 type ConfigMap = HashMap<String, HashMap<String, Option<String>>>;
 
 static VERSION: &str = "0";
 
 pub(crate) struct Repo {
-    worktree: std::path::PathBuf,
+    worktree: PathBuf,
     config: ConfigMap,
 }
 
 impl Repo {
-    pub(crate) fn new(worktree: &std::path::Path, force: bool) -> Result<Self, SimpleError> {
+    // TODO: create a "force" version instead of requiring [force] to be passed in.
+    pub(crate) fn new(worktree: &Path, force: bool) -> Result<Self, SimpleError> {
         let gristdir = worktree.join(".grist");
 
         if !force && !gristdir.is_dir() {
@@ -47,7 +52,7 @@ impl Repo {
     }
 
     /// Create a new repo at [path].
-    pub(crate) fn create(path: &std::path::Path) -> Result<Self, Box<dyn std::error::Error>> {
+    pub(crate) fn create(path: &Path) -> Result<Self, Box<dyn Error>> {
         let repo = Repo::new(path, true)?;
         let worktree = &repo.worktree;
 
@@ -84,6 +89,25 @@ impl Repo {
         Self::default_config().write(gristdir.join("config").to_str().unwrap())?;
 
         Ok(repo)
+    }
+
+    /// recursively walk up from [path] to find a [Repo].
+    /// returns a [Repo] if found, and [None] if not unless [required] is true,
+    /// in which case it returns an [Error].
+    pub(crate) fn find(path: &Path, required: bool) -> Result<Option<Repo>, SimpleError> {
+        if path.join(".grist").is_dir() {
+            return Ok(Some(Repo::new(path, false)?));
+        }
+        match path.parent() {
+            Some(parent) => Self::find(parent, required),
+            None => {
+                if required {
+                    Err(SimpleError::new("no grist directory"))
+                } else {
+                    Ok(None)
+                }
+            }
+        }
     }
 
     fn default_config() -> Ini {
