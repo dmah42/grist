@@ -7,6 +7,7 @@ extern crate ini;
 
 use crate::repo::Repo;
 use clap::{Parser, Subcommand, ValueEnum};
+use simple_error::SimpleError;
 use std::{error::Error, path::PathBuf};
 
 #[derive(Parser)]
@@ -38,6 +39,15 @@ enum Commands {
     },
     Checkout {},
     Commit {},
+    HashObject {
+        #[arg(short, action = clap::ArgAction::SetTrue)]
+        write: Option<bool>,
+
+        #[arg(short, value_enum)]
+        type_: Option<ObjectType>,
+
+        file: PathBuf,
+    },
     Init {
         path: Option<PathBuf>,
     },
@@ -68,6 +78,33 @@ fn cat_file(type_: &ObjectType, object: &String) -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
+fn hash_object(
+    write: bool,
+    type_: &Option<ObjectType>,
+    file: &PathBuf,
+) -> Result<(), Box<dyn Error>> {
+    log::info!("hashing {:?} {:?}", type_, file);
+    let cwd_or_err = std::env::current_dir();
+    let cwd = cwd_or_err.unwrap();
+    let repo = Repo::find(&cwd, write)?;
+
+    let content = std::fs::read(file)?;
+
+    let hash = object::hash(&content);
+
+    if write {
+        match type_.unwrap() {
+            ObjectType::Blob => object::Blob::write(&mut repo.unwrap(), &hash, &content)?,
+            _ => Err(SimpleError::new(format!(
+                "unimplemented hash_object for type {:?}",
+                type_
+            )))?,
+        }
+    }
+    println!("{}", hash);
+    Ok(())
+}
+
 fn init(path: &Option<PathBuf>) -> Result<Repo, Box<dyn Error>> {
     log::info!("initializing grist repo at {:?}", path);
     let cwd_or_err = std::env::current_dir();
@@ -94,6 +131,17 @@ fn main() {
                     "failed to cat file {:?} {}: {}",
                     type_,
                     object,
+                    res.err().unwrap()
+                );
+            }
+        }
+        Commands::HashObject { write, type_, file } => {
+            let res = hash_object(write.unwrap_or(false), type_, file);
+            if res.is_err() {
+                log::error!(
+                    "failed to hash object {:?} {:?}: {}",
+                    type_,
+                    file,
                     res.err().unwrap()
                 );
             }
