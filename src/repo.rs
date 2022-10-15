@@ -1,4 +1,5 @@
 use configparser::ini::Ini;
+use diesel::{Connection, SqliteConnection};
 use simple_error::SimpleError;
 use std::{
     collections::HashMap,
@@ -13,16 +14,21 @@ static VERSION: &str = "0";
 pub(crate) struct Repo {
     worktree: PathBuf,
     config: ConfigMap,
+    db: SqliteConnection,
 }
 
 impl<'a> Repo {
     // TODO: create a "force" version instead of requiring [force] to be passed in.
-    pub(crate) fn new(worktree: &Path, force: bool) -> Result<Self, SimpleError> {
+    pub(crate) fn new(worktree: &Path, force: bool) -> Result<Self, Box<dyn Error>> {
         let gristdir = worktree.join(".grist");
 
         if !force && !gristdir.is_dir() {
-            return Err(SimpleError::new("not a gristdir"));
+            return Err(Box::new(SimpleError::new("not a gristdir")));
         }
+
+        let db_path = gristdir.join("db.sqlite3");
+        let db_url = db_path.to_str().unwrap();
+        let db = SqliteConnection::establish(db_url)?;
 
         let config_path = gristdir.join("config");
 
@@ -35,19 +41,20 @@ impl<'a> Repo {
         };
 
         if config.is_none() {
-            return Err(SimpleError::new("config not found"));
+            return Err(Box::new(SimpleError::new("config not found")));
         }
 
         if !force
             && config.as_ref().unwrap()["core"]["repositoryformatversion"]
                 != Some(String::from(VERSION))
         {
-            return Err(SimpleError::new("unsupported repo version"));
+            return Err(Box::new(SimpleError::new("unsupported repo version")));
         }
 
         Ok(Self {
             worktree: worktree.to_path_buf(),
             config: config.unwrap(),
+            db,
         })
     }
 
@@ -77,7 +84,7 @@ impl<'a> Repo {
         let gristdir = worktree.join(".grist");
 
         std::fs::create_dir_all(gristdir.join("branches"))?;
-        std::fs::create_dir(gristdir.join("objects"))?;
+        //std::fs::create_dir(gristdir.join("objects"))?;
         std::fs::create_dir_all(gristdir.join("refs").join("tags"))?;
         std::fs::create_dir_all(gristdir.join("refs").join("heads"))?;
 
@@ -95,7 +102,7 @@ impl<'a> Repo {
     /// recursively walk up from [path] to find a [Repo].
     /// returns a [Repo] if found, and [None] if not unless [required] is true,
     /// in which case it returns an [Error].
-    pub(crate) fn find(path: &Path, required: bool) -> Result<Option<Repo>, SimpleError> {
+    pub(crate) fn find(path: &Path, required: bool) -> Result<Option<Repo>, Box<dyn Error>> {
         if path.join(".grist").is_dir() {
             return Ok(Some(Repo::new(path, false)?));
         }
@@ -103,7 +110,7 @@ impl<'a> Repo {
             Some(parent) => Self::find(parent, required),
             None => {
                 if required {
-                    Err(SimpleError::new("no grist directory"))
+                    Err(Box::new(SimpleError::new("no grist directory")))
                 } else {
                     Ok(None)
                 }
@@ -129,5 +136,9 @@ impl<'a> Repo {
 
     pub(crate) fn gristdir(&self) -> PathBuf {
         self.worktree.join(".grist")
+    }
+
+    pub(crate) fn db(&mut self) -> &mut SqliteConnection {
+        &mut self.db
     }
 }

@@ -1,0 +1,4 @@
+CREATE TABLE blobs (
+    hash VARCHAR(20) NOT NULL PRIMARY KEY,
+    content BLOB NOT NULL
+)

@@ -8,6 +8,7 @@ edition = "2021"
 [dependencies]
 clap = {version = "4.0", features = ["derive"]}
 configparser = {version = "1.0.0"}
+diesel = { version = "2.0.0", features = ["sqlite"]}
 env_logger = {version = "0.9.1"}
 hex = {version = "0.4.3"}
 ini = {version = "1.3.0"}

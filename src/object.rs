@@ -1,8 +1,36 @@
 use crate::repo::Repo;
-use sha1::{Digest, Sha1};
+use diesel::prelude::*;
 use simple_error::SimpleError;
+// use sha1::{Digest, Sha1};
+// use simple_error::SimpleError;
 use std::error::Error;
 
+#[derive(Queryable)]
+pub(crate) struct Blob {
+    pub hash: String,
+    pub content: Vec<u8>,
+}
+
+impl Blob {
+    pub(crate) fn read(repo: &mut Repo, sha: &String) -> Result<String, Box<dyn Error>> {
+        use crate::schema::blobs::dsl::*;
+
+        let db = repo.db();
+
+        let blob: Blob = blobs.find(sha).first(db)?;
+
+        if blob.hash != *sha {
+            return Err(Box::new(SimpleError::new(format!(
+                "something very bad happened: hashes don't match: {} vs {}",
+                sha, blob.hash
+            ))));
+        }
+
+        Ok(String::from_utf8(blob.content)?)
+    }
+}
+
+/*
 pub(crate) trait Object {
     fn new(repo: &Repo, raw: &[u8]) -> Self
     where
@@ -45,35 +73,4 @@ impl dyn Object {
         }
     }
 }
-
-pub(crate) struct Commit {}
-
-impl Object for Commit {
-    fn new(repo: &Repo, raw: &[u8]) -> Self {
-        Commit {}
-    }
-}
-
-pub(crate) struct Tree {}
-
-impl Object for Tree {
-    fn new(repo: &Repo, raw: &[u8]) -> Self {
-        Tree {}
-    }
-}
-
-pub(crate) struct Tag {}
-
-impl Object for Tag {
-    fn new(repo: &Repo, raw: &[u8]) -> Self {
-        Tag {}
-    }
-}
-
-pub(crate) struct Blob {}
-
-impl Object for Blob {
-    fn new(repo: &Repo, raw: &[u8]) -> Self {
-        Blob {}
-    }
-}
+*/
