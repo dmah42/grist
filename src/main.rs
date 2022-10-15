@@ -1,3 +1,4 @@
+mod object;
 mod repo;
 
 #[macro_use]

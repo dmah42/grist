@@ -15,7 +15,7 @@ pub(crate) struct Repo {
     config: ConfigMap,
 }
 
-impl Repo {
+impl<'a> Repo {
     // TODO: create a "force" version instead of requiring [force] to be passed in.
     pub(crate) fn new(worktree: &Path, force: bool) -> Result<Self, SimpleError> {
         let gristdir = worktree.join(".grist");
@@ -73,6 +73,7 @@ impl Repo {
             std::fs::create_dir(worktree)?;
         }
 
+        // TODO: this is where we'd replace filesystem with sqlite or similar
         let gristdir = worktree.join(".grist");
 
         std::fs::create_dir_all(gristdir.join("branches"))?;
@@ -120,5 +121,13 @@ impl Repo {
         config.set("core", "filemode", Some(false.to_string()));
         config.set("core", "bare", Some(false.to_string()));
         config
+    }
+
+    pub(crate) fn worktree(&'a self) -> &'a Path {
+        &self.worktree
+    }
+
+    pub(crate) fn gristdir(&self) -> PathBuf {
+        self.worktree.join(".grist")
     }
 }
