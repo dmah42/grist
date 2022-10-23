@@ -1,5 +1,6 @@
 use configparser::ini::Ini;
-use diesel::{Connection, SqliteConnection};
+use futures::executor::block_on;
+use gluesql::{prelude::Glue, sled_storage::SledStorage};
 use simple_error::SimpleError;
 use std::{
     collections::HashMap,
@@ -9,27 +10,39 @@ use std::{
 
 type ConfigMap = HashMap<String, HashMap<String, Option<String>>>;
 
-static VERSION: &str = "0";
+const VERSION: &str = "0";
 
 pub(crate) struct Repo {
     worktree: PathBuf,
     config: ConfigMap,
-    db: SqliteConnection,
+    db: Glue<SledStorage>,
 }
 
 impl<'a> Repo {
     // TODO: create a "force" version instead of requiring [force] to be passed in.
-    pub(crate) fn new(worktree: &Path, force: bool) -> Result<Self, Box<dyn Error>> {
+    pub(crate) async fn new(worktree: &Path, force: bool) -> Result<Self, Box<dyn Error>> {
         let gristdir = worktree.join(".grist");
 
         if !force && !gristdir.is_dir() {
             return Err(Box::new(SimpleError::new("not a gristdir")));
         }
 
+        // create the database
         let db_path = gristdir.join("db.sqlite3");
         let db_url = db_path.to_str().unwrap();
-        let db = SqliteConnection::establish(db_url)?;
 
+        let storage = SledStorage::new(db_url)?;
+        let mut db = Glue::new(storage);
+
+        db.execute(
+            "CREATE TABLE \
+            Blobs ( \
+                hash VARCHAR(20) PRIMARY KEY,
+                content BLOB,
+            );",
+        )?;
+
+        // create config if it doesn't exist
         let config_path = gristdir.join("config");
 
         let config = match config_path.exists() {
@@ -60,7 +73,7 @@ impl<'a> Repo {
 
     /// Create a new repo at [path].
     pub(crate) fn create(path: &Path) -> Result<Self, Box<dyn Error>> {
-        let repo = Repo::new(path, true)?;
+        let repo = block_on(Repo::new(path, true))?;
         let worktree = &repo.worktree;
 
         if worktree.exists() {
@@ -104,7 +117,7 @@ impl<'a> Repo {
     /// in which case it returns an [Error].
     pub(crate) fn find(path: &Path, required: bool) -> Result<Option<Repo>, Box<dyn Error>> {
         if path.join(".grist").is_dir() {
-            return Ok(Some(Repo::new(path, false)?));
+            return Ok(Some(block_on(Repo::new(path, false))?));
         }
         match path.parent() {
             Some(parent) => Self::find(parent, required),
@@ -138,7 +151,7 @@ impl<'a> Repo {
         self.worktree.join(".grist")
     }
 
-    pub(crate) fn db(&mut self) -> &mut SqliteConnection {
+    pub(crate) fn db(&mut self) -> &mut Glue<SledStorage> {
         &mut self.db
     }
 }

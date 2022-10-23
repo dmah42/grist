@@ -1,6 +1,5 @@
 mod object;
 mod repo;
-mod schema;
 
 #[macro_use]
 extern crate ini;
