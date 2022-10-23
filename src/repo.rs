@@ -1,5 +1,4 @@
 use configparser::ini::Ini;
-use futures::executor::block_on;
 use gluesql::{prelude::Glue, sled_storage::SledStorage};
 use simple_error::SimpleError;
 use std::{
@@ -20,7 +19,7 @@ pub(crate) struct Repo {
 
 impl<'a> Repo {
     // TODO: create a "force" version instead of requiring [force] to be passed in.
-    pub(crate) async fn new(worktree: &Path, force: bool) -> Result<Self, Box<dyn Error>> {
+    pub(crate) fn new(worktree: &Path, force: bool) -> Result<Self, Box<dyn Error>> {
         let gristdir = worktree.join(".grist");
 
         if !force && !gristdir.is_dir() {
@@ -28,7 +27,7 @@ impl<'a> Repo {
         }
 
         // create the database
-        let db_path = gristdir.join("db.sqlite3");
+        let db_path = gristdir.join("db.sled");
         let db_url = db_path.to_str().unwrap();
 
         let storage = SledStorage::new(db_url)?;
@@ -73,7 +72,7 @@ impl<'a> Repo {
 
     /// Create a new repo at [path].
     pub(crate) fn create(path: &Path) -> Result<Self, Box<dyn Error>> {
-        let repo = block_on(Repo::new(path, true))?;
+        let repo = Repo::new(path, true)?;
         let worktree = &repo.worktree;
 
         if worktree.exists() {
@@ -117,7 +116,7 @@ impl<'a> Repo {
     /// in which case it returns an [Error].
     pub(crate) fn find(path: &Path, required: bool) -> Result<Option<Repo>, Box<dyn Error>> {
         if path.join(".grist").is_dir() {
-            return Ok(Some(block_on(Repo::new(path, false))?));
+            return Ok(Some(Repo::new(path, false)?));
         }
         match path.parent() {
             Some(parent) => Self::find(parent, required),
