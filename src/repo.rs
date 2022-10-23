@@ -22,27 +22,14 @@ impl<'a> Repo {
     pub(crate) fn new(worktree: &Path, force: bool) -> Result<Self, Box<dyn Error>> {
         let gristdir = worktree.join(".grist");
 
+        log::debug!("checking if {:?} is a dir", gristdir);
         if !force && !gristdir.is_dir() {
             return Err(Box::new(SimpleError::new("not a gristdir")));
         }
 
-        // create the database
-        let db_path = gristdir.join("db.sled");
-        let db_url = db_path.to_str().unwrap();
-
-        let storage = SledStorage::new(db_url)?;
-        let mut db = Glue::new(storage);
-
-        db.execute(
-            "CREATE TABLE \
-            Blobs ( \
-                hash VARCHAR(20) PRIMARY KEY,
-                content BLOB,
-            );",
-        )?;
-
         // create config if it doesn't exist
-        let config_path = gristdir.join("config");
+        log::debug!("creating/reading config");
+        let config_path = gristdir.join("config.yaml");
 
         let config = match config_path.exists() {
             true => Some(ini!(config_path.to_str().unwrap())),
@@ -63,6 +50,13 @@ impl<'a> Repo {
             return Err(Box::new(SimpleError::new("unsupported repo version")));
         }
 
+        // finding database
+        let db_path = gristdir.join("db.sled");
+        let db_url = db_path.to_str().unwrap();
+
+        let storage = SledStorage::new(db_url)?;
+        let mut db = Glue::new(storage);
+
         Ok(Self {
             worktree: worktree.to_path_buf(),
             config: config.unwrap(),
@@ -72,29 +66,37 @@ impl<'a> Repo {
 
     /// Create a new repo at [path].
     pub(crate) fn create(path: &Path) -> Result<Self, Box<dyn Error>> {
-        let repo = Repo::new(path, true)?;
-        let worktree = &repo.worktree;
+        log::debug!("creating repo at {:?}", path);
+        let mut repo = Repo::new(path, true)?;
+        let gristdir = &repo.gristdir();
 
-        if worktree.exists() {
-            if !worktree.is_dir() {
+        log::debug!("gristdir: {:?}", gristdir);
+
+        if gristdir.exists() {
+            log::debug!("already exists");
+            if !gristdir.is_dir() {
                 return Err(Box::new(SimpleError::new(format!(
                     "{:?} is not a directory",
-                    worktree
-                ))));
-            }
-            if std::fs::read_dir(worktree)?.count() > 0 {
-                return Err(Box::new(SimpleError::new(format!(
-                    "{:?} is not empty",
-                    worktree
+                    gristdir
                 ))));
             }
         } else {
-            std::fs::create_dir(worktree)?;
+            log::debug!("creating gristdir");
+            std::fs::create_dir(gristdir)?;
         }
 
-        // TODO: this is where we'd replace filesystem with sqlite or similar
-        let gristdir = worktree.join(".grist");
+        // create the database
+        log::debug!("creating database");
 
+        repo.db.execute(
+            "CREATE TABLE \
+            Blobs ( \
+                hash TEXT PRIMARY KEY,
+                content TEXT,
+            );",
+        )?;
+
+        // TODO: this is where we'd replace filesystem with databases
         std::fs::create_dir_all(gristdir.join("branches"))?;
         //std::fs::create_dir(gristdir.join("objects"))?;
         std::fs::create_dir_all(gristdir.join("refs").join("tags"))?;
@@ -106,7 +108,7 @@ impl<'a> Repo {
         )?;
         std::fs::write(gristdir.join("HEAD"), "ref: refs/heads/master\n")?;
 
-        Self::default_config().write(gristdir.join("config").to_str().unwrap())?;
+        Self::default_config().write(gristdir.join("config.yaml").to_str().unwrap())?;
 
         Ok(repo)
     }
@@ -115,7 +117,9 @@ impl<'a> Repo {
     /// returns a [Repo] if found, and [None] if not unless [required] is true,
     /// in which case it returns an [Error].
     pub(crate) fn find(path: &Path, required: bool) -> Result<Option<Repo>, Box<dyn Error>> {
+        log::debug!("checking {:?} is a worktree", path);
         if path.join(".grist").is_dir() {
+            log::debug!("it is!");
             return Ok(Some(Repo::new(path, false)?));
         }
         match path.parent() {

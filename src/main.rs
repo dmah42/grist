@@ -85,6 +85,9 @@ fn hash_object(
     log::info!("hashing {:?} {:?}", type_, file);
     let cwd_or_err = std::env::current_dir();
     let cwd = cwd_or_err.unwrap();
+
+    log::debug!("finding worktree from {:?}", cwd);
+
     let repo = Repo::find(&cwd, write)?;
 
     let content = std::fs::read(file)?;
@@ -92,8 +95,10 @@ fn hash_object(
     let hash = object::hash(&content);
 
     if write {
-        match type_.unwrap() {
-            ObjectType::Blob => object::Blob::write(&mut repo.unwrap(), &hash, &content)?,
+        match type_ {
+            None | Some(ObjectType::Blob) => {
+                object::Blob::write(&mut repo.unwrap(), &hash, &content)?
+            }
             _ => Err(SimpleError::new(format!(
                 "unimplemented hash_object for type {:?}",
                 type_
