@@ -18,7 +18,7 @@ impl Blob {
 
         let select_stmt = format!(r#"SELECT hash, content FROM Blobs WHERE hash = "{}""#, sha);
 
-        log::debug!("object read: {}", select_stmt);
+        log::info!("blob select: {}", select_stmt);
 
         let payloads = db.execute(select_stmt)?;
 
@@ -83,9 +83,7 @@ impl Blob {
             },
         };
         log::debug!("hex: {:?}; hex_len: {}", hex, hex.len());
-        let decoded = hex::decode(hex)?;
-        log::debug!("decoded: {:?}; decoded_len: {}", decoded, decoded.len());
-        let s = String::from_utf8(decoded)?;
+        let s = String::from_utf8(hex::decode(hex)?)?;
         log::debug!("as string: {:?}", s);
         Ok(s)
     }
@@ -108,7 +106,7 @@ impl Blob {
 
         let insert_stmt = format!(r#"INSERT INTO Blobs VALUES ("{}", "{}")"#, hash, hex);
 
-        log::debug!("insert statement: {}", insert_stmt);
+        log::info!("blob insert: {}", insert_stmt);
 
         match db.execute(insert_stmt) {
             Ok(_) => Ok(()),
