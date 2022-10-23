@@ -778,7 +778,6 @@ dependencies = [
  "clap 4.0.15",
  "configparser",
  "env_logger",
- "futures",
  "gluesql",
  "hex",
  "ini",
