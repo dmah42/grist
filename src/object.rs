@@ -30,38 +30,36 @@ impl Blob {
             ))));
         }
 
-        let row = match &payloads[0] {
-            Payload::Select { labels: _, rows } => {
-                log::debug!("{} rows found", rows.len());
-                if rows.len() != 1 {
-                    return Err(Box::new(SimpleError::new(format!(
-                        "expected 1 row, got {}",
-                        rows.len()
-                    ))));
-                }
-                log::debug!("row: {:?}", &rows[0]);
-                &rows[0]
-            }
-            _ => {
+        let row = if let Payload::Select { labels: _, rows } = &payloads[0] {
+            log::debug!("{} rows found", rows.len());
+            if rows.len() != 1 {
                 return Err(Box::new(SimpleError::new(format!(
-                    "unexpected payload type {:?}",
-                    payloads[0]
+                    "expected 1 row, got {}",
+                    rows.len()
                 ))));
             }
+            log::debug!("row: {:?}", &rows[0]);
+            &rows[0]
+        } else {
+            return Err(Box::new(SimpleError::new(format!(
+                "unexpected payload type {:?}",
+                payloads[0]
+            ))));
         };
 
-        let hash = match row.get_value_by_index(0) {
-            None => return Err(Box::new(SimpleError::new("no hash found"))),
-            Some(v) => match v {
-                Value::Str(s) => s,
-                _ => {
-                    return Err(Box::new(SimpleError::new(format!(
-                        "unexpected value type for hash: {:?}",
-                        v
-                    ))))
-                }
-            },
+        let hash = if let Some(v) = row.get_value_by_index(0) {
+            if let Value::Str(s) = v {
+                s
+            } else {
+                return Err(Box::new(SimpleError::new(format!(
+                    "unexpected value type for hash: {:?}",
+                    v
+                ))));
+            }
+        } else {
+            return Err(Box::new(SimpleError::new("no hash found")));
         };
+
         log::debug!("hash: {}; sha: {}", hash, sha);
         if hash.ne(sha) {
             return Err(Box::new(SimpleError::new(format!(
@@ -70,18 +68,19 @@ impl Blob {
             ))));
         }
 
-        let hex = match row.get_value_by_index(1) {
-            None => return Err(Box::new(SimpleError::new("no content found"))),
-            Some(v) => match v {
-                Value::Str(s) => s,
-                _ => {
-                    return Err(Box::new(SimpleError::new(format!(
-                        "unexpected value type for content: {:?}",
-                        v
-                    ))));
-                }
-            },
+        let hex = if let Some(v) = row.get_value_by_index(1) {
+            if let Value::Str(s) = v {
+                s
+            } else {
+                return Err(Box::new(SimpleError::new(format!(
+                    "unexpected value type for content: {:?}",
+                    v
+                ))));
+            }
+        } else {
+            return Err(Box::new(SimpleError::new("no content found")));
         };
+
         log::debug!("hex: {:?}; hex_len: {}", hex, hex.len());
         let s = String::from_utf8(hex::decode(hex)?)?;
         log::debug!("as string: {:?}", s);
