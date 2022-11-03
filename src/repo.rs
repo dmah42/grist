@@ -122,16 +122,14 @@ impl<'a> Repo {
             log::debug!("it is!");
             return Ok(Some(Repo::new(path, false)?));
         }
-        match path.parent() {
-            Some(parent) => Self::find(parent, required),
-            None => {
-                if required {
-                    Err(Box::new(SimpleError::new("no grist directory")))
-                } else {
-                    Ok(None)
-                }
+        let Some(parent) = path.parent() else {
+            if required {
+                Err(Box::new(SimpleError::new("no grist directory")))
+            } else {
+                Ok(None)
             }
-        }
+        };
+        Self::find(parent, required)
     }
 
     fn default_config() -> Ini {
