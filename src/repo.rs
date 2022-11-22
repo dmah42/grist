@@ -24,42 +24,23 @@ pub(crate) struct Repo {
 }
 
 impl<'a> Repo {
-    // TODO: create a "force" version instead of requiring [force] to be passed in.
-    fn new(worktree: &Path, force: bool) -> Result<Self, Box<dyn Error>> {
+    fn new(worktree: &Path) -> Result<Self, Box<dyn Error>> {
         let gristpath = worktree.join(".grist");
-
-        log::debug!("checking if {:?} is a dir", gristpath);
-        if !force && !gristpath.is_dir() {
-            return Err(Box::new(SimpleError::new("not a gristpath")));
-        }
 
         // create config if it doesn't exist
         log::debug!("creating/reading config");
         let config_path = gristpath.join("config.yaml");
 
-        let config = match config_path.exists() {
-            true => Some(ini!(config_path.to_str().unwrap())),
-            false => match force {
-                true => Some(ConfigMap::new()),
-                false => None,
-            },
+        let config = if config_path.exists() {
+            ini!(config_path.to_str().unwrap())
+        } else {
+            ConfigMap::new()
         };
-
-        if config.is_none() {
-            return Err(Box::new(SimpleError::new("config not found")));
-        }
-
-        if !force
-            && config.as_ref().unwrap()["core"]["repositoryformatversion"]
-                != Some(String::from(VERSION))
-        {
-            return Err(Box::new(SimpleError::new("unsupported repo version")));
-        }
 
         let dbpath = gristpath.join("db");
         // create the database
         log::debug!("creating database in {:?}", dbpath);
-        let mut blobpath = dbpath.to_path_buf();
+        let mut blobpath = dbpath;
         blobpath.push("blobs.json");
         if std::fs::read(&blobpath).is_err() {
             std::fs::write(&blobpath, b"{}")?;
@@ -69,7 +50,43 @@ impl<'a> Repo {
 
         Ok(Self {
             worktree: worktree.to_path_buf(),
-            config: config.unwrap(),
+            config,
+            db: Db { blobs },
+        })
+    }
+
+    fn load(worktree: &Path) -> Result<Self, Box<dyn Error>> {
+        let gristpath = worktree.join(".grist");
+
+        log::debug!("checking if {:?} is a dir", gristpath);
+        if !gristpath.is_dir() {
+            return Err(Box::new(SimpleError::new("not a gristpath")));
+        }
+
+        // create config if it doesn't exist
+        log::debug!("creating/reading config");
+        let config_path = gristpath.join("config.yaml");
+
+        let config = if config_path.exists() {
+            ini!(config_path.to_str().unwrap())
+        } else {
+            return Err(Box::new(SimpleError::new("config not found")));
+        };
+
+        if config["core"]["repositoryformatversion"] != Some(String::from(VERSION)) {
+            return Err(Box::new(SimpleError::new("unsupported repo version")));
+        }
+
+        let dbpath = gristpath.join("db");
+        log::debug!("loading database from {:?}", dbpath);
+        let mut blobpath = dbpath.to_path_buf();
+        blobpath.push("blobs.json");
+
+        let blobs = AcidJson::open(blobpath.as_path())?;
+
+        Ok(Self {
+            worktree: worktree.to_path_buf(),
+            config,
             db: Db { blobs },
         })
     }
@@ -77,7 +94,7 @@ impl<'a> Repo {
     /// Create a new repo at [path].
     pub(crate) fn create(path: &Path) -> Result<Self, Box<dyn Error>> {
         log::debug!("creating repo at {:?}", path);
-        let repo = Repo::new(path, true)?;
+        let repo = Repo::new(path)?;
         let gristpath = &repo.gristpath();
 
         log::debug!("gristdir: {:?}", gristpath);
@@ -119,7 +136,7 @@ impl<'a> Repo {
         log::debug!("checking {:?} is a worktree", path);
         if path.join(".grist").is_dir() {
             log::debug!("it is!");
-            return Ok(Some(Repo::new(path, false)?));
+            return Ok(Some(Repo::load(path)?));
         }
         let Some(parent) = path.parent() else {
             if required {
