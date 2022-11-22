@@ -1,5 +1,4 @@
 use crate::repo::Repo;
-use gluesql::prelude::*;
 use sha1::{Digest, Sha1};
 use simple_error::SimpleError;
 use std::error::Error;
@@ -14,86 +13,17 @@ pub(crate) struct Blob {}
 
 impl Blob {
     pub(crate) fn read(repo: &mut Repo, sha: &String) -> Result<String, Box<dyn Error>> {
-        let db = repo.db();
-
-        let select_stmt = format!(r#"SELECT hash, content FROM Blobs WHERE hash = "{}""#, sha);
-
-        log::info!("blob select: {}", select_stmt);
-
-        let payloads = db.execute(select_stmt)?;
-
-        log::debug!("{} payloads found", payloads.len());
-        if payloads.len() != 1 {
-            return Err(Box::new(SimpleError::new(format!(
-                "expected 1 payload, got {}",
-                payloads.len()
-            ))));
+        if let Some(hex) = repo.blobs().read().get(sha) {
+            log::debug!("hex: {hex}; hex_len: {}", hex.len());
+            let s = String::from_utf8(hex::decode(hex)?)?;
+            log::debug!("as string: {s}");
+            Ok(s)
+        } else {
+            Err(Box::new(SimpleError::new(format!("hash {sha} not found"))))
         }
-
-        let row = if let Payload::Select { labels: _, rows } = &payloads[0] {
-            log::debug!("{} rows found", rows.len());
-            if rows.len() != 1 {
-                return Err(Box::new(SimpleError::new(format!(
-                    "expected 1 row, got {}",
-                    rows.len()
-                ))));
-            }
-            log::debug!("row: {:?}", &rows[0]);
-            &rows[0]
-        } else {
-            return Err(Box::new(SimpleError::new(format!(
-                "unexpected payload type {:?}",
-                payloads[0]
-            ))));
-        };
-
-        let hash = if let Some(v) = row.get_value_by_index(0) {
-            if let Value::Str(s) = v {
-                s
-            } else {
-                return Err(Box::new(SimpleError::new(format!(
-                    "unexpected value type for hash: {:?}",
-                    v
-                ))));
-            }
-        } else {
-            return Err(Box::new(SimpleError::new("no hash found")));
-        };
-
-        log::debug!("hash: {}; sha: {}", hash, sha);
-        if hash.ne(sha) {
-            return Err(Box::new(SimpleError::new(format!(
-                "something very bad happened: hashes don't match: {} vs {}",
-                sha, hash
-            ))));
-        }
-
-        let hex = if let Some(v) = row.get_value_by_index(1) {
-            if let Value::Str(s) = v {
-                s
-            } else {
-                return Err(Box::new(SimpleError::new(format!(
-                    "unexpected value type for content: {:?}",
-                    v
-                ))));
-            }
-        } else {
-            return Err(Box::new(SimpleError::new("no content found")));
-        };
-
-        log::debug!("hex: {:?}; hex_len: {}", hex, hex.len());
-        let s = String::from_utf8(hex::decode(hex)?)?;
-        log::debug!("as string: {:?}", s);
-        Ok(s)
     }
 
-    pub(crate) fn write(
-        repo: &mut Repo,
-        hash: &String,
-        content: &[u8],
-    ) -> Result<(), Box<dyn Error>> {
-        let db = repo.db();
-
+    pub(crate) fn write(repo: &mut Repo, hash: &String, content: &[u8]) {
         let hex = hex::encode(content);
         log::debug!(
             "content: {:?}; content_len: {}; hex: {}; hex_len: {}",
@@ -103,13 +33,35 @@ impl Blob {
             hex.len(),
         );
 
-        let insert_stmt = format!(r#"INSERT INTO Blobs VALUES ("{}", "{}")"#, hash, hex);
-
-        log::info!("blob insert: {}", insert_stmt);
-
-        match db.execute(insert_stmt) {
-            Ok(_) => Ok(()),
-            Err(e) => Err(Box::new(e)),
-        }
+        repo.blobs().write().insert(hash.to_string(), hex);
     }
 }
+
+struct Author {
+    name: String,
+    email: String,
+    // TODO: timestamp?
+}
+
+impl ToString for Author {
+    fn to_string(&self) -> String {
+        format!("{} <{}>", self.name, self.email)
+    }
+}
+
+pub(crate) struct Commit {
+    /// hex string
+    hash: String,
+
+    /// hex string
+    parent: String,
+
+    author: Author,
+
+    committer: Author,
+
+    // TODO: gpgsig
+    comment: String,
+}
+
+impl Commit {}

@@ -97,7 +97,7 @@ fn hash_object(
     if write {
         match type_ {
             None | Some(ObjectType::Blob) => {
-                object::Blob::write(&mut repo.unwrap(), &hash, &content)?
+                object::Blob::write(&mut repo.unwrap(), &hash, &content)
             }
             _ => Err(SimpleError::new(format!(
                 "unimplemented hash_object for type {:?}",

@@ -1,5 +1,5 @@
+use acidjson::AcidJson;
 use configparser::ini::Ini;
-use gluesql::{prelude::Glue, sled_storage::SledStorage};
 use simple_error::SimpleError;
 use std::{
     collections::HashMap,
@@ -8,28 +8,34 @@ use std::{
 };
 
 type ConfigMap = HashMap<String, HashMap<String, Option<String>>>;
+type BlobsTable = AcidJson<HashMap<String, String>>;
 
 const VERSION: &str = "0";
+
+#[derive(Debug)]
+pub(crate) struct Db {
+    blobs: BlobsTable,
+}
 
 pub(crate) struct Repo {
     worktree: PathBuf,
     config: ConfigMap,
-    db: Glue<SledStorage>,
+    db: Db,
 }
 
 impl<'a> Repo {
     // TODO: create a "force" version instead of requiring [force] to be passed in.
-    pub(crate) fn new(worktree: &Path, force: bool) -> Result<Self, Box<dyn Error>> {
-        let gristdir = worktree.join(".grist");
+    fn new(worktree: &Path, force: bool) -> Result<Self, Box<dyn Error>> {
+        let gristpath = worktree.join(".grist");
 
-        log::debug!("checking if {:?} is a dir", gristdir);
-        if !force && !gristdir.is_dir() {
-            return Err(Box::new(SimpleError::new("not a gristdir")));
+        log::debug!("checking if {:?} is a dir", gristpath);
+        if !force && !gristpath.is_dir() {
+            return Err(Box::new(SimpleError::new("not a gristpath")));
         }
 
         // create config if it doesn't exist
         log::debug!("creating/reading config");
-        let config_path = gristdir.join("config.yaml");
+        let config_path = gristpath.join("config.yaml");
 
         let config = match config_path.exists() {
             true => Some(ini!(config_path.to_str().unwrap())),
@@ -50,65 +56,58 @@ impl<'a> Repo {
             return Err(Box::new(SimpleError::new("unsupported repo version")));
         }
 
-        // finding database
-        let db_path = gristdir.join("db.sled");
-        let db_url = db_path.to_str().unwrap();
+        let dbpath = gristpath.join("db");
+        // create the database
+        log::debug!("creating database in {:?}", dbpath);
+        let mut blobpath = dbpath.to_path_buf();
+        blobpath.push("blobs.json");
+        if std::fs::read(&blobpath).is_err() {
+            std::fs::write(&blobpath, b"{}")?;
+        }
 
-        let storage = SledStorage::new(db_url)?;
-        let mut db = Glue::new(storage);
+        let blobs = AcidJson::open(blobpath.as_path())?;
 
         Ok(Self {
             worktree: worktree.to_path_buf(),
             config: config.unwrap(),
-            db,
+            db: Db { blobs },
         })
     }
 
     /// Create a new repo at [path].
     pub(crate) fn create(path: &Path) -> Result<Self, Box<dyn Error>> {
         log::debug!("creating repo at {:?}", path);
-        let mut repo = Repo::new(path, true)?;
-        let gristdir = &repo.gristdir();
+        let repo = Repo::new(path, true)?;
+        let gristpath = &repo.gristpath();
 
-        log::debug!("gristdir: {:?}", gristdir);
+        log::debug!("gristdir: {:?}", gristpath);
 
-        if gristdir.exists() {
+        if gristpath.exists() {
             log::debug!("already exists");
-            if !gristdir.is_dir() {
+            if !gristpath.is_dir() {
                 return Err(Box::new(SimpleError::new(format!(
                     "{:?} is not a directory",
-                    gristdir
+                    gristpath
                 ))));
             }
         } else {
             log::debug!("creating gristdir");
-            std::fs::create_dir(gristdir)?;
+            std::fs::create_dir(gristpath)?;
         }
 
-        // create the database
-        log::debug!("creating database");
-
-        repo.db.execute(
-            "CREATE TABLE \
-            Blobs ( \
-                hash TEXT PRIMARY KEY,
-                content TEXT,
-            );",
-        )?;
-
         // TODO: this is where we'd replace filesystem with databases
-        std::fs::create_dir_all(gristdir.join("branches"))?;
-        //std::fs::create_dir(gristdir.join("objects"))?;
-        std::fs::create_dir_all(gristdir.join("refs").join("tags"))?;
-        std::fs::create_dir_all(gristdir.join("refs").join("heads"))?;
+        std::fs::create_dir_all(gristpath.join("branches"))?;
+        //std::fs::create_dir(gristpath.join("objects"))?;
+        std::fs::create_dir_all(gristpath.join("refs").join("tags"))?;
+        std::fs::create_dir_all(gristpath.join("refs").join("heads"))?;
 
         std::fs::write(
-            gristdir.join("description"),
+            gristpath.join("description"),
             "unnamed repo: edit this file to name the repo",
         )?;
-        std::fs::write(gristdir.join("HEAD"), "ref: refs/heads/master\n")?;
+        std::fs::write(gristpath.join("HEAD"), "ref: refs/heads/master\n")?;
 
-        Self::default_config().write(gristdir.join("config.yaml").to_str().unwrap())?;
+        Self::default_config().write(gristpath.join("config.yaml").to_str().unwrap())?;
 
         Ok(repo)
     }
@@ -148,11 +147,19 @@ impl<'a> Repo {
         &self.worktree
     }
 
-    pub(crate) fn gristdir(&self) -> PathBuf {
+    pub(crate) fn gristpath(&self) -> PathBuf {
         self.worktree.join(".grist")
     }
 
-    pub(crate) fn db(&mut self) -> &mut Glue<SledStorage> {
-        &mut self.db
+    pub(crate) fn dbpath(&self) -> PathBuf {
+        self.gristpath().join("db")
+    }
+
+    pub(crate) fn blobs(&self) -> &BlobsTable {
+        &self.db().blobs
+    }
+
+    pub(crate) fn db(&self) -> &Db {
+        &self.db
     }
 }
