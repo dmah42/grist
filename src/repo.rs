@@ -1,3 +1,4 @@
+use crate::object::Commit;
 use acidjson::AcidJson;
 use configparser::ini::Ini;
 use simple_error::SimpleError;
@@ -9,12 +10,14 @@ use std::{
 
 type ConfigMap = HashMap<String, HashMap<String, Option<String>>>;
 type BlobsTable = AcidJson<HashMap<String, String>>;
+type CommitsTable = AcidJson<HashMap<String, Commit>>;
 
 const VERSION: &str = "0";
 
 #[derive(Debug)]
 pub(crate) struct Db {
     blobs: BlobsTable,
+    commits: CommitsTable,
 }
 
 pub(crate) struct Repo {
@@ -40,7 +43,7 @@ impl<'a> Repo {
         let dbpath = gristpath.join("db");
         // create the database
         log::debug!("creating database in {:?}", dbpath);
-        let mut blobpath = dbpath;
+        let mut blobpath = dbpath.clone();
         blobpath.push("blobs.json");
         if std::fs::read(&blobpath).is_err() {
             std::fs::write(&blobpath, b"{}")?;
@@ -48,10 +51,17 @@ impl<'a> Repo {
 
         let blobs = AcidJson::open(blobpath.as_path())?;
 
+        let mut commitpath = dbpath;
+        commitpath.push("commits.json");
+        if std::fs::read(&commitpath).is_err() {
+            std::fs::write(&commitpath, b"{}")?;
+        }
+        let commits = AcidJson::open(commitpath.as_path())?;
+
         Ok(Self {
             worktree: worktree.to_path_buf(),
             config,
-            db: Db { blobs },
+            db: Db { blobs, commits },
         })
     }
 
@@ -84,10 +94,15 @@ impl<'a> Repo {
 
         let blobs = AcidJson::open(blobpath.as_path())?;
 
+        let mut commitpath = dbpath.to_path_buf();
+        commitpath.push("blobs.json");
+
+        let commits = AcidJson::open(blobpath.as_path())?;
+
         Ok(Self {
             worktree: worktree.to_path_buf(),
             config,
-            db: Db { blobs },
+            db: Db { blobs, commits },
         })
     }
 
@@ -140,9 +155,9 @@ impl<'a> Repo {
         }
         let Some(parent) = path.parent() else {
             if required {
-                Err(Box::new(SimpleError::new("no grist directory")))
+                return Err(Box::new(SimpleError::new("no grist directory")));
             } else {
-                Ok(None)
+                return Ok(None);
             }
         };
         Self::find(parent, required)

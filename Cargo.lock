@@ -181,6 +181,7 @@ dependencies = [
  "hex",
  "ini",
  "log",
+ "serde",
  "sha1",
  "simple-error",
 ]

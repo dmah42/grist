@@ -1,4 +1,5 @@
 use crate::repo::Repo;
+use serde::{Deserialize, Serialize};
 use sha1::{Digest, Sha1};
 use simple_error::SimpleError;
 use std::error::Error;
@@ -37,21 +38,17 @@ impl Blob {
     }
 }
 
+#[derive(Serialize, Deserialize, Debug)]
 struct Author {
     name: String,
     email: String,
     // TODO: timestamp?
 }
 
-impl ToString for Author {
-    fn to_string(&self) -> String {
-        format!("{} <{}>", self.name, self.email)
-    }
-}
-
+#[derive(Serialize, Deserialize, Debug)]
 pub(crate) struct Commit {
     /// hex string
-    hash: String,
+    tree: String,
 
     /// hex string
     parent: String,
