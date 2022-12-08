@@ -75,9 +75,9 @@ fn cat_file(type_: &ObjectType, object: &String) -> Result<()> {
     let mut repo = Repo::find(&cwd).context("unable to find repo")?.unwrap();
     let content = match type_ {
         ObjectType::Blob => object::Blob::read(&mut repo, object).context(format!("failed to read blob {}", object))?,
-        ObjectType::Commit => object::Blob::read(&mut repo, object).context(format!("failed to read commit {}", object))?,
+        ObjectType::Commit => object::Commit::read(&mut repo, object).context(format!("failed to read commit {}", object))?,
         ObjectType::Tag => String::from("UNIMPLEMENTED TAG CAT"),
-        ObjectType::Tree => String::from("UNIMPLEMENTED TREE CAT"),
+        ObjectType::Tree => object::Tree::read(&mut repo, object).context(format!("failed to read tree {}", object))?,
     };
     println!("{}", content);
     Ok(())
@@ -100,12 +100,12 @@ fn hash_object(
     if write {
         match type_ {
             None | Some(ObjectType::Blob) => {
-                object::Blob::write(&mut repo.unwrap(), &hash, &content)
+                object::Blob::write(&mut repo.unwrap(), &hash, object::Blob::new(content))
             },
-            _ => Err(SimpleError::new(format!(
+            _ => return Err(format!(
                 "unimplemented hash_object for type {:?}",
                 type_
-            )))?,
+            )),
         }
     }
     println!("{}", hash);

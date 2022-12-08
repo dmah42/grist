@@ -2,22 +2,44 @@ use crate::object::Commit;
 use acidjson::AcidJson;
 use anyhow::Result;
 use configparser::ini::Ini;
-use simple_error::SimpleError;
 use std::{
     collections::HashMap,
     path::{Path, PathBuf},
 };
 
 type ConfigMap = HashMap<String, HashMap<String, Option<String>>>;
-type BlobsTable = AcidJson<HashMap<String, String>>;
+type BlobsTable = AcidJson<HashMap<String, Blob>>;
 type CommitsTable = AcidJson<HashMap<String, Commit>>;
+type TreesTable = AcidJson<HashMap<String, Tree>>;
 
 const VERSION: &str = "0";
+
+#[derive(Error, Debug)]
+pub(crate) enum RepoError {
+    #[error("not a grist directory")]
+    NotAGristDir,
+
+    #[error("config not found")]
+    ConfigNotFound,
+
+    #[error("unsupported version")]
+    UnsupportedVersion,
+
+    #[error("{dir} is not a directory")]
+    NotADirectory { dir },
+
+    #[error(transparent)]
+    AcidJsonError(#[from] acidjson::AcidJsonError),
+
+    #[error(transparent)]
+    IOError(#[from] std::IOError),
+}
 
 #[derive(Debug)]
 pub(crate) struct Db {
     blobs: BlobsTable,
     commits: CommitsTable,
+    trees: TreesTable,
 }
 
 pub(crate) struct Repo {
@@ -58,10 +80,17 @@ impl<'a> Repo {
         }
         let commits = AcidJson::open(commitpath.as_path())?;
 
+        let mut treespath = dbpath;
+        treespath.push("trees.json");
+        if std::fs::read(&treespath).is_err() {
+            std::fs::write(&treespath, b"{}")?;
+        }
+        let trees = AcidJson::open(treespath.as_path())?;
+
         Ok(Self {
             worktree: worktree.to_path_buf(),
             config,
-            db: Db { blobs, commits },
+            db: Db { blobs, commits, trees },
         })
     }
 
@@ -70,7 +99,7 @@ impl<'a> Repo {
 
         log::debug!("checking if {:?} is a dir", gristpath);
         if !gristpath.is_dir() {
-            return Err(Box::new(SimpleError::new("not a gristpath")));
+            return Err(NotAGristDir);
         }
 
         // create config if it doesn't exist
@@ -80,29 +109,32 @@ impl<'a> Repo {
         let config = if config_path.exists() {
             ini!(config_path.to_str().unwrap())
         } else {
-            return Err(Box::new(SimpleError::new("config not found")));
+            return Err(ConfigNotFound);
         };
 
         if config["core"]["repositoryformatversion"] != Some(String::from(VERSION)) {
-            return Err(Box::new(SimpleError::new("unsupported repo version")));
+            return Err(UnsupportedVersion);
         }
 
         let dbpath = gristpath.join("db");
         log::debug!("loading database from {:?}", dbpath);
+
         let mut blobpath = dbpath.to_path_buf();
         blobpath.push("blobs.json");
-
         let blobs = AcidJson::open(blobpath.as_path())?;
 
         let mut commitpath = dbpath.to_path_buf();
         commitpath.push("blobs.json");
-
         let commits = AcidJson::open(blobpath.as_path())?;
+
+        let mut treespath = dbpath.to_path_buf();
+        treespath.push("trees.json");
+        let trees = AcidJson::open(treespath.as_path())?;
 
         Ok(Self {
             worktree: worktree.to_path_buf(),
             config,
-            db: Db { blobs, commits },
+            db: Db { blobs, commits, trees },
         })
     }
 
@@ -117,10 +149,7 @@ impl<'a> Repo {
         if gristpath.exists() {
             log::debug!("already exists");
             if !gristpath.is_dir() {
-                return Err(Box::new(SimpleError::new(format!(
-                    "{:?} is not a directory",
-                    gristpath
-                ))));
+                return Err(NotADirectory { dir: gristpath });
             }
         } else {
             log::debug!("creating gristdir");
@@ -150,10 +179,10 @@ impl<'a> Repo {
         log::debug!("checking {:?} is a worktree", path);
         if path.join(".grist").is_dir() {
             log::debug!("it is!");
-            return Ok(Repo::load(path)?);
+            return Repo::load(path)?;
         }
         let Some(parent) = path.parent() else {
-            return Err(Box::new(SimpleError::new("no grist directory")));
+            return Err(NotAGristDir);
         };
         Self::find(parent)
     }
