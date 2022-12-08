@@ -1,10 +1,10 @@
 use crate::object::Commit;
 use acidjson::AcidJson;
+use anyhow::Result;
 use configparser::ini::Ini;
 use simple_error::SimpleError;
 use std::{
     collections::HashMap,
-    error::Error,
     path::{Path, PathBuf},
 };
 
@@ -27,7 +27,7 @@ pub(crate) struct Repo {
 }
 
 impl<'a> Repo {
-    fn new(worktree: &Path) -> Result<Self, Box<dyn Error>> {
+    fn new(worktree: &Path) -> Result<Self> {
         let gristpath = worktree.join(".grist");
 
         // create config if it doesn't exist
@@ -65,7 +65,7 @@ impl<'a> Repo {
         })
     }
 
-    fn load(worktree: &Path) -> Result<Self, Box<dyn Error>> {
+    fn load(worktree: &Path) -> Result<Self> {
         let gristpath = worktree.join(".grist");
 
         log::debug!("checking if {:?} is a dir", gristpath);
@@ -107,7 +107,7 @@ impl<'a> Repo {
     }
 
     /// Create a new repo at [path].
-    pub(crate) fn create(path: &Path) -> Result<Self, Box<dyn Error>> {
+    pub(crate) fn create(path: &Path) -> Result<Self> {
         log::debug!("creating repo at {:?}", path);
         let repo = Repo::new(path)?;
         let gristpath = &repo.gristpath();
@@ -145,22 +145,17 @@ impl<'a> Repo {
     }
 
     /// recursively walk up from [path] to find a [Repo].
-    /// returns a [Repo] if found, and [None] if not unless [required] is true,
-    /// in which case it returns an [Error].
-    pub(crate) fn find(path: &Path, required: bool) -> Result<Option<Repo>, Box<dyn Error>> {
+    /// returns a [Repo] if found, or an [Error] if not.
+    pub(crate) fn find(path: &Path) -> Result<Repo> {
         log::debug!("checking {:?} is a worktree", path);
         if path.join(".grist").is_dir() {
             log::debug!("it is!");
-            return Ok(Some(Repo::load(path)?));
+            return Ok(Repo::load(path)?);
         }
         let Some(parent) = path.parent() else {
-            if required {
-                return Err(Box::new(SimpleError::new("no grist directory")));
-            } else {
-                return Ok(None);
-            }
+            return Err(Box::new(SimpleError::new("no grist directory")));
         };
-        Self::find(parent, required)
+        Self::find(parent)
     }
 
     fn default_config() -> Ini {

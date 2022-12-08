@@ -5,9 +5,11 @@ mod repo;
 extern crate ini;
 
 use crate::repo::Repo;
+
+use anyhow::{Context, Result};
 use clap::{Parser, Subcommand, ValueEnum};
-use simple_error::SimpleError;
-use std::{error::Error, path::PathBuf};
+use std::collections::HashSet;
+use std::path::PathBuf;
 
 #[derive(Parser)]
 #[command(author, version, about)]
@@ -45,31 +47,35 @@ enum Commands {
         #[arg(short, value_enum)]
         type_: Option<ObjectType>,
 
+        /// path to file to be hashed
         file: PathBuf,
     },
     Init {
         path: Option<PathBuf>,
     },
-    Log {},
+    Log {
+        /// The commit at which to start the log
+        #[arg(short, default_value_t = "HEAD")]
+        commit: Option<String>,
+    },
     Merge {},
     Rebase {},
     Rm {},
     Tag {},
 }
 
-fn add(path: &PathBuf) -> Result<(), Box<dyn Error>> {
+fn add(path: &PathBuf) -> Result<()> {
     log::info!("adding {:?}", path);
     Ok(())
 }
 
-fn cat_file(type_: &ObjectType, object: &String) -> Result<(), Box<dyn Error>> {
+fn cat_file(type_: &ObjectType, object: &String) -> Result<()> {
     log::info!("catting {:?} {}", type_, object);
-    let cwd_or_err = std::env::current_dir();
-    let cwd = cwd_or_err.unwrap();
-    let mut repo = Repo::find(&cwd, true)?.unwrap();
+    let cwd = std::env::current_dir()?.unwrap();
+    let mut repo = Repo::find(&cwd).context("unable to find repo")?.unwrap();
     let content = match type_ {
-        ObjectType::Blob => object::Blob::read(&mut repo, object)?,
-        ObjectType::Commit => String::from("UNIMPLEMENTED COMMIT CAT"),
+        ObjectType::Blob => object::Blob::read(&mut repo, object).context(format!("failed to read blob {}", object))?,
+        ObjectType::Commit => object::Blob::read(&mut repo, object).context(format!("failed to read commit {}", object))?,
         ObjectType::Tag => String::from("UNIMPLEMENTED TAG CAT"),
         ObjectType::Tree => String::from("UNIMPLEMENTED TREE CAT"),
     };
@@ -81,24 +87,21 @@ fn hash_object(
     write: bool,
     type_: &Option<ObjectType>,
     file: &PathBuf,
-) -> Result<(), Box<dyn Error>> {
+) -> Result<()> {
     log::info!("hashing {:?} {:?}", type_, file);
-    let cwd_or_err = std::env::current_dir();
-    let cwd = cwd_or_err.unwrap();
+    let cwd = std::env::current_dir()?.unwrap();
 
     log::debug!("finding worktree from {:?}", cwd);
 
-    let repo = Repo::find(&cwd, write)?;
-
-    let content = std::fs::read(file)?;
-
+    let repo = Repo::find(&cwd).context("unable to find repo")?;
+    let content = std::fs::read(file).context(format!("failed to read file {}", file))?;
     let hash = object::hash(&content);
 
     if write {
         match type_ {
             None | Some(ObjectType::Blob) => {
                 object::Blob::write(&mut repo.unwrap(), &hash, &content)
-            }
+            },
             _ => Err(SimpleError::new(format!(
                 "unimplemented hash_object for type {:?}",
                 type_
@@ -109,51 +112,62 @@ fn hash_object(
     Ok(())
 }
 
-fn init(path: &Option<PathBuf>) -> Result<Repo, Box<dyn Error>> {
+fn init(path: &Option<PathBuf>) -> Result<Repo> {
     log::info!("initializing grist repo at {:?}", path);
-    let cwd_or_err = std::env::current_dir();
-    if cwd_or_err.is_err() {
-        panic!("failed to get current directory");
-    }
-    let cwd = cwd_or_err.unwrap();
+    let cwd = std::env::current_dir().context("failed to get current directory")?.unwrap();
     let repo_path = path.as_ref().unwrap_or(&cwd);
     Repo::create(repo_path)
 }
 
-fn main() {
+fn log_graphviz(commit: String) -> Result<()> {
+    log::info!("logging from {}", commit);
+    let cwd = std::env::current_dir().context("failed to get current directory")?.unwrap();
+    let repo = Repo::find(&cwd).context("unable to find repo")?;
+
+    let mut seen = HashSet::new();
+
+    return log_relationship(&repo, hash, &seen)
+}
+
+fn log_relationship(repo: &Repo, hash: String, seen: &mut HashSet) -> Result<()> {
+    if seen.contains(hash) {
+        Ok(())
+    }
+    seen.insert(hash);
+
+    commit = Commit::read(repo, hash)?;
+
+    let parents = &commit.parents;
+
+    for p in parents {
+        println!("c{} -> c{}", hash, p);
+    }
+
+    Ok(())
+}
+
+fn main() -> Result<()> {
     env_logger::init();
     let args = Args::parse();
     match &args.command {
         Commands::Add { path } => match add(path) {
             Ok(_) => println!("added {:?}", path),
-            Err(error) => log::error!("failed to add {:?}: {}", path, error),
+            Err(error) => return error.context(format!("failed to add {:?}: {}", path, error)),
         },
         Commands::CatFile { type_, object } => {
-            let res = cat_file(type_, object);
-            if res.is_err() {
-                log::error!(
-                    "failed to cat file {:?} {}: {}",
-                    type_,
-                    object,
-                    res.err().unwrap()
-                );
-            }
+            cat_file(type_, object).context(format!("failed to cat file {:?} {}", type_, object))?;
         }
         Commands::HashObject { write, type_, file } => {
-            let res = hash_object(write.unwrap_or(false), type_, file);
-            if res.is_err() {
-                log::error!(
-                    "failed to hash object {:?} {:?}: {}",
-                    type_,
-                    file,
-                    res.err().unwrap()
-                );
-            }
+            hash_object(write.unwrap_or(false), type_, file).context(format!("failed to hash object {:?} {:?}", type_, file))?;
         }
         Commands::Init { path } => match init(path) {
             Ok(_) => println!("initialized repo at {:?}", path),
-            Err(error) => log::error!("failed to initialize repo at {:?}: {}", path, error),
+            Err(error) => return error.context(format!("failed to initialize repo at {:?}: {}", path, error)),
         },
-        _ => panic!("command"),
+        Commands::Log { commit } => {
+            log_graphviz(commit)?
+        }
+        _ => return Err(format!("unknown command {}", &args.command)),
     }
+    Ok(())
 }

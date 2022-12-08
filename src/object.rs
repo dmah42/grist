@@ -1,8 +1,21 @@
 use crate::repo::Repo;
+
+use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use sha1::{Digest, Sha1};
-use simple_error::SimpleError;
-use std::error::Error;
+use thiserror::Error;
+
+#[derive(Error, Debug)]
+pub(crate) enum ObjectError {
+    #[error("hash {hash} not found")]
+    HashNotFound { hash: String },
+
+    #error(transparent)
+    FromHexError{#[from] hex::FromHexError},
+
+    #error(transparent)
+    Utf8Error{#[from] Utf8Error},
+}
 
 pub(crate) fn hash(data: &Vec<u8>) -> String {
     let mut hasher = Sha1::new();
@@ -10,31 +23,38 @@ pub(crate) fn hash(data: &Vec<u8>) -> String {
     hex::encode(hasher.finalize())
 }
 
-pub(crate) struct Blob {}
+pub(crate) struct Blob {
+    hash: String,
+    content: [u8],
+}
 
 impl Blob {
-    pub(crate) fn read(repo: &mut Repo, sha: &String) -> Result<String, Box<dyn Error>> {
-        if let Some(hex) = repo.blobs().read().get(sha) {
+    pub(crate) fn read(repo: &mut Repo, hash: &String) -> Result<Self, ObjectError> {
+        if let Some(hex) = repo.blobs().read().get(hash) {
             log::debug!("hex: {hex}; hex_len: {}", hex.len());
-            let s = String::from_utf8(hex::decode(hex)?)?;
-            log::debug!("as string: {s}");
-            Ok(s)
+            let b = Blob {
+                hash,
+                content: hex::decode(hex)?,
+            }
+            //let s = String::from_utf8(hex::decode(hex)?)?;
+            log::debug!("as string: {}", String::from_utf8(b.content)?);
+            Ok(b)
         } else {
-            Err(Box::new(SimpleError::new(format!("hash {sha} not found"))))
+            Err(HashNotFound{hash})
         }
     }
 
-    pub(crate) fn write(repo: &mut Repo, hash: &String, content: &[u8]) {
-        let hex = hex::encode(content);
+    pub(crate) fn write(repo: &mut Repo, blob: &Blob) {
+        let hex = hex::encode(blob.content);
         log::debug!(
             "content: {:?}; content_len: {}; hex: {}; hex_len: {}",
-            content,
-            content.len(),
+            blob.content,
+            blob.content.len(),
             hex,
             hex.len(),
         );
 
-        repo.blobs().write().insert(hash.to_string(), hex);
+        repo.blobs().write().insert(blob.hash, hex);
     }
 }
 
@@ -50,8 +70,8 @@ pub(crate) struct Commit {
     /// hex string
     tree: String,
 
-    /// hex string
-    parent: String,
+    /// hex strings
+    parents: Vec<String>,
 
     author: Author,
 
@@ -61,4 +81,17 @@ pub(crate) struct Commit {
     comment: String,
 }
 
-impl Commit {}
+impl Commit {
+    pub(crate) fn read(repo: &mut Repo, sha: &String) -> Result<Self> {
+        if let Some(commit) = repo.blobs().read().get(hash) {
+            log::debug!("commit: {commit}");
+            Ok(commit)
+        } else {
+            Err(HashNotFound{hash})
+        }
+    }
+
+    pub(crate) fn write(repo: &mut Repo, hash: &String, commit: &Commit) {
+        repo.blobs().write().insert(hash, commit);
+    }
+}
