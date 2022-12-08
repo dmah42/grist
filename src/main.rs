@@ -58,6 +58,11 @@ enum Commands {
         #[arg(short, default_value_t = "HEAD")]
         commit: Option<String>,
     },
+    LsTree {
+        /// The tree object to list
+        #[arg(short)]
+        tree: String,
+    },
     Merge {},
     Rebase {},
     Rm {},
@@ -74,7 +79,7 @@ fn cat_file(type_: &ObjectType, object: &String) -> Result<()> {
     let cwd = std::env::current_dir()?.unwrap();
     let mut repo = Repo::find(&cwd).context("unable to find repo")?.unwrap();
     let content = match type_ {
-        ObjectType::Blob => object::Blob::read(&mut repo, object).context(format!("failed to read blob {}", object))?,
+        ObjectType::Blob => object::Blob::read(&mut repo, object).context(format!("failed to read blob {}", object))?.decode()?,
         ObjectType::Commit => object::Commit::read(&mut repo, object).context(format!("failed to read commit {}", object))?,
         ObjectType::Tag => String::from("UNIMPLEMENTED TAG CAT"),
         ObjectType::Tree => object::Tree::read(&mut repo, object).context(format!("failed to read tree {}", object))?,
@@ -146,6 +151,32 @@ fn log_relationship(repo: &Repo, hash: String, seen: &mut HashSet) -> Result<()>
     Ok(())
 }
 
+fn object_type(hash: &String) -> Option<ObjectType> {
+    let cwd = std::env::current_dir()?.unwrap();
+    let mut repo = Repo::find(&cwd).context("unable to find repo")?.unwrap();
+    if Ok(blob) = object::Blob::read(repo, hash) {
+        return Some(ObjectType::Blob);
+    } else if Ok(commit) = object::Commit::read(repo, hash) {
+        return Some(ObjectType::Commit);
+    } else if Ok(tree) = object::Tree::read(repo, hash) {
+        return Some(ObjectType::Tree);
+    }
+    return None;
+}
+
+fn lstree(hash: &String) -> Result<()> {
+    log::info!("listing tree {}", tree);
+    let cwd = std::env::current_dir().context("failed to get current directory")?.unwrap();
+    let repo = Repo::find(&cwd).context("unable to find repo")?;
+
+    let tree = object::Tree::read(repo, hash)?;
+
+    for item in tree.items {
+        println!("{} {} {}\t{}", item.mode, object_type(item.sha), item.sha, item.path)
+    }
+    Ok(())
+}
+
 fn main() -> Result<()> {
     env_logger::init();
     let args = Args::parse();
@@ -165,7 +196,10 @@ fn main() -> Result<()> {
             Err(error) => return error.context(format!("failed to initialize repo at {:?}: {}", path, error)),
         },
         Commands::Log { commit } => {
-            log_graphviz(commit)?
+            log_graphviz(commit)?;
+        },
+        Commands::LsTree { tree } => {
+            lstree(tree)?;
         }
         _ => return Err(format!("unknown command {}", &args.command)),
     }
