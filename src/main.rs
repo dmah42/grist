@@ -4,20 +4,12 @@ mod repo;
 #[macro_use]
 extern crate ini;
 
+use crate::object::Commit;
 use crate::repo::Repo;
 
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 use clap::{Parser, Subcommand, ValueEnum};
-use std::collections::HashSet;
-use std::path::PathBuf;
-
-#[derive(Parser)]
-#[command(author, version, about)]
-#[command(propagate_version = true)]
-struct Args {
-    #[command(subcommand)]
-    command: Commands,
-}
+use std::{collections::HashSet, path::PathBuf};
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, ValueEnum)]
 enum ObjectType {
@@ -27,7 +19,15 @@ enum ObjectType {
     Tree,
 }
 
-#[derive(Subcommand)]
+#[derive(Parser, Debug)]
+#[command(author, version, about)]
+#[command(propagate_version = true)]
+struct Args {
+    #[command(subcommand)]
+    command: Commands,
+}
+
+#[derive(Subcommand, Debug)]
 enum Commands {
     Add {
         path: std::path::PathBuf,
@@ -55,8 +55,8 @@ enum Commands {
     },
     Log {
         /// The commit at which to start the log
-        #[arg(short, default_value_t = "HEAD")]
-        commit: Option<String>,
+        #[arg(short, default_value_t = String::from("HEAD"))]
+        commit: String,
     },
     LsTree {
         /// The tree object to list
@@ -76,41 +76,42 @@ fn add(path: &PathBuf) -> Result<()> {
 
 fn cat_file(type_: &ObjectType, object: &String) -> Result<()> {
     log::info!("catting {:?} {}", type_, object);
-    let cwd = std::env::current_dir()?.unwrap();
-    let mut repo = Repo::find(&cwd).context("unable to find repo")?.unwrap();
+    let cwd = std::env::current_dir()?;
+    let mut repo = Repo::find(&cwd).context("unable to find repo")?;
     let content = match type_ {
-        ObjectType::Blob => object::Blob::read(&mut repo, object).context(format!("failed to read blob {}", object))?.decode()?,
-        ObjectType::Commit => object::Commit::read(&mut repo, object).context(format!("failed to read commit {}", object))?,
+        ObjectType::Blob => object::Blob::read(&mut repo, object)
+            .context(format!("failed to read blob {}", object))?
+            .decode()?,
+        //ObjectType::Commit => object::Commit::read(&mut repo, object)
+        //    .context(format!("failed to read commit {}", object))?,
         ObjectType::Tag => String::from("UNIMPLEMENTED TAG CAT"),
-        ObjectType::Tree => object::Tree::read(&mut repo, object).context(format!("failed to read tree {}", object))?,
+        //ObjectType::Tree => object::Tree::read(&mut repo, object)
+        //    .context(format!("failed to read tree {}", object))?,
+        _ => String::from("unimplemented cat for {type_}"),
     };
     println!("{}", content);
     Ok(())
 }
 
-fn hash_object(
-    write: bool,
-    type_: &Option<ObjectType>,
-    file: &PathBuf,
-) -> Result<()> {
+fn hash_object(write: bool, type_: &Option<ObjectType>, file: &PathBuf) -> Result<()> {
     log::info!("hashing {:?} {:?}", type_, file);
-    let cwd = std::env::current_dir()?.unwrap();
+    let cwd = std::env::current_dir()?;
 
     log::debug!("finding worktree from {:?}", cwd);
 
-    let repo = Repo::find(&cwd).context("unable to find repo")?;
-    let content = std::fs::read(file).context(format!("failed to read file {}", file))?;
+    let mut repo = Repo::find(&cwd).context("unable to find repo")?;
+    let content = std::fs::read(file).context(format!("failed to read file {file:?}"))?;
     let hash = object::hash(&content);
+
+    let content_str =
+        String::from_utf8(content).context("failed to convert content of file from utf8")?;
 
     if write {
         match type_ {
             None | Some(ObjectType::Blob) => {
-                object::Blob::write(&mut repo.unwrap(), &hash, object::Blob::new(content))
-            },
-            _ => return Err(format!(
-                "unimplemented hash_object for type {:?}",
-                type_
-            )),
+                object::Blob::write(&mut repo, &hash, &object::Blob::new(&content_str))
+            }
+            _ => bail!("unimplemented hash for {type_:?}"),
         }
     }
     println!("{}", hash);
@@ -119,60 +120,65 @@ fn hash_object(
 
 fn init(path: &Option<PathBuf>) -> Result<Repo> {
     log::info!("initializing grist repo at {:?}", path);
-    let cwd = std::env::current_dir().context("failed to get current directory")?.unwrap();
+    let cwd = std::env::current_dir().context("failed to get current directory")?;
     let repo_path = path.as_ref().unwrap_or(&cwd);
     Repo::create(repo_path)
 }
 
-fn log_graphviz(commit: String) -> Result<()> {
+fn log_graphviz(commit: &String) -> Result<()> {
     log::info!("logging from {}", commit);
-    let cwd = std::env::current_dir().context("failed to get current directory")?.unwrap();
-    let repo = Repo::find(&cwd).context("unable to find repo")?;
+    let cwd = std::env::current_dir().context("failed to get current directory")?;
+    let mut repo = Repo::find(&cwd).context("unable to find repo")?;
 
-    let mut seen = HashSet::new();
+    let mut seen: HashSet<String> = HashSet::new();
 
-    return log_relationship(&repo, hash, &seen)
+    log_relationship(&mut repo, commit, &mut seen)
 }
 
-fn log_relationship(repo: &Repo, hash: String, seen: &mut HashSet) -> Result<()> {
+fn log_relationship(repo: &mut Repo, hash: &String, seen: &mut HashSet<String>) -> Result<()> {
     if seen.contains(hash) {
-        Ok(())
+        return Ok(());
     }
-    seen.insert(hash);
+    seen.insert(hash.clone());
 
-    commit = Commit::read(repo, hash)?;
+    let commit = Commit::read(repo, hash).context("failed to read commit {hash}")?;
 
     let parents = &commit.parents;
 
     for p in parents {
         println!("c{} -> c{}", hash, p);
     }
-
     Ok(())
 }
 
-fn object_type(hash: &String) -> Option<ObjectType> {
-    let cwd = std::env::current_dir()?.unwrap();
-    let mut repo = Repo::find(&cwd).context("unable to find repo")?.unwrap();
-    if Ok(blob) = object::Blob::read(repo, hash) {
-        return Some(ObjectType::Blob);
-    } else if Ok(commit) = object::Commit::read(repo, hash) {
-        return Some(ObjectType::Commit);
-    } else if Ok(tree) = object::Tree::read(repo, hash) {
-        return Some(ObjectType::Tree);
+fn object_type(hash: &String) -> Result<Option<ObjectType>> {
+    let cwd = std::env::current_dir()?;
+    let mut repo = Repo::find(&cwd).context("unable to find repo")?;
+    if let Ok(_blob) = object::Blob::read(&mut repo, hash) {
+        return Ok(Some(ObjectType::Blob));
+    } else if let Ok(_commit) = object::Commit::read(&mut repo, hash) {
+        return Ok(Some(ObjectType::Commit));
+    } else if let Ok(_tree) = object::Tree::read(&mut repo, hash) {
+        return Ok(Some(ObjectType::Tree));
     }
-    return None;
+    Ok(None)
 }
 
 fn lstree(hash: &String) -> Result<()> {
-    log::info!("listing tree {}", tree);
-    let cwd = std::env::current_dir().context("failed to get current directory")?.unwrap();
-    let repo = Repo::find(&cwd).context("unable to find repo")?;
+    log::info!("listing tree {}", hash);
+    let cwd = std::env::current_dir().context("failed to get current directory")?;
+    let mut repo = Repo::find(&cwd).context("unable to find repo")?;
 
-    let tree = object::Tree::read(repo, hash)?;
+    let tree = object::Tree::read(&mut repo, hash)?;
 
     for item in tree.items {
-        println!("{} {} {}\t{}", item.mode, object_type(item.sha), item.sha, item.path)
+        println!(
+            "{} {:?} {}\t{:?}",
+            item.mode,
+            object_type(&item.hash)?,
+            item.hash,
+            item.path
+        )
     }
     Ok(())
 }
@@ -183,25 +189,27 @@ fn main() -> Result<()> {
     match &args.command {
         Commands::Add { path } => match add(path) {
             Ok(_) => println!("added {:?}", path),
-            Err(error) => return error.context(format!("failed to add {:?}: {}", path, error)),
+            Err(error) => bail!("failed to add {path:?}: {error}"),
         },
         Commands::CatFile { type_, object } => {
-            cat_file(type_, object).context(format!("failed to cat file {:?} {}", type_, object))?;
+            cat_file(type_, object)
+                .context(format!("failed to cat file {:?} {}", type_, object))?;
         }
         Commands::HashObject { write, type_, file } => {
-            hash_object(write.unwrap_or(false), type_, file).context(format!("failed to hash object {:?} {:?}", type_, file))?;
+            hash_object(write.unwrap_or(false), type_, file)
+                .context(format!("failed to hash object {:?} {:?}", type_, file))?;
         }
         Commands::Init { path } => match init(path) {
             Ok(_) => println!("initialized repo at {:?}", path),
-            Err(error) => return error.context(format!("failed to initialize repo at {:?}: {}", path, error)),
+            Err(error) => bail!("failed to initialize repo at {path:?}: {error}"),
         },
         Commands::Log { commit } => {
             log_graphviz(commit)?;
-        },
+        }
         Commands::LsTree { tree } => {
             lstree(tree)?;
         }
-        _ => return Err(format!("unknown command {}", &args.command)),
+        _ => bail!("unknown command: {:?}", &args.command),
     }
     Ok(())
 }

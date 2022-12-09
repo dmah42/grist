@@ -1,24 +1,9 @@
 use crate::repo::Repo;
 
-use anyhow::Result;
+use anyhow::{anyhow, Context, Result};
 use serde::{Deserialize, Serialize};
 use sha1::{Digest, Sha1};
-use thiserror::Error;
-
-#[derive(Error, Debug)]
-pub(crate) enum ObjectError {
-    #[error("hash {hash} not found")]
-    HashNotFound { hash: String },
-
-    #[error("function unimplemented")]
-    Unimplemented,
-
-    #error(transparent)
-    FromHexError{#[from] hex::FromHexError},
-
-    #error(transparent)
-    Utf8Error{#[from] Utf8Error},
-}
+use std::path::PathBuf;
 
 pub(crate) fn hash(data: &Vec<u8>) -> String {
     let mut hasher = Sha1::new();
@@ -26,100 +11,103 @@ pub(crate) fn hash(data: &Vec<u8>) -> String {
     hex::encode(hasher.finalize())
 }
 
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub(crate) struct Blob {
     /// hex encoded blob content
-    hex: [u8],
+    hex: String,
 }
 
 impl Blob {
-    pub(crate) new(content: &String) -> Self  => {
+    pub(crate) fn new(content: &String) -> Self {
         Blob {
             hex: hex::encode(content),
         }
     }
 
-    pub(crate) fn decode(self: Self) -> String {
-        String::from(hex::decode(self.hex)?)
+    pub(crate) fn decode(&self) -> Result<String> {
+        let decoded = hex::decode(self.hex.clone())?;
+        String::from_utf8(decoded).context("failed to convert {decoded} to utf8")
     }
 
     // TODO: generic trait for read/write.
-    pub(crate) fn read(repo: &mut Repo, hash: &String) -> Result<Self, ObjectError> {
+    pub(crate) fn read(repo: &mut Repo, hash: &String) -> Result<Self> {
         if let Some(blob) = repo.blobs().read().get(hash) {
-            log::debug!("hex: {hex}; hex_len: {}", blob.hex.len());
-            Ok(blob)
+            log::debug!("hex: {}; hex_len: {}", blob.hex, blob.hex.len());
+            Ok(blob.clone())
         } else {
-            Err(HashNotFound{hash})
+            Err(anyhow!("hash {hash} not found"))
         }
     }
 
-    pub(crate) fn write(repo: &mut Repo, hash: &String, blob: &Blob) {
+    pub(crate) fn write(repo: &mut Repo, hash: &str, blob: &Blob) {
         log::debug!("hex: {}; hex_len: {}", blob.hex, blob.hex.len());
-        repo.blobs().write().insert(hash, blob);
+        repo.blobs().write().insert(hash.to_owned(), blob.clone());
     }
 }
 
-#[derive(Serialize, Deserialize, Debug)]
-struct Author {
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub(crate) struct Author {
     name: String,
     email: String,
     // TODO: timestamp?
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub(crate) struct Commit {
     /// hex string
-    tree: String,
+    pub tree: String,
 
     /// hex strings
-    parents: Vec<String>,
+    pub parents: Vec<String>,
 
-    author: Author,
-    committer: Author,
+    pub author: Author,
+    pub committer: Author,
 
     // TODO: optional gpgsig
-
-    comment: String,
+    pub comment: String,
 }
 
 impl Commit {
-    pub(crate) fn read(repo: &mut Repo, sha: &String) -> Result<Self> {
-        if let Some(commit) = repo.blobs().read().get(hash) {
-            log::debug!("commit: {commit}");
-            Ok(commit)
+    pub(crate) fn read(repo: &mut Repo, hash: &String) -> Result<Self> {
+        if let Some(commit) = repo.commits().read().get(hash) {
+            log::debug!("commit: {:?}", commit);
+            Ok(commit.clone())
         } else {
-            Err(HashNotFound{hash})
+            Err(anyhow!("{hash} not found"))
         }
     }
 
-    pub(crate) fn write(repo: &mut Repo, hash: &String, commit: &Commit) {
-        repo.blobs().write().insert(hash, commit);
+    pub(crate) fn write(repo: &mut Repo, hash: &str, commit: &Commit) {
+        repo.commits()
+            .write()
+            .insert(hash.to_owned(), commit.clone());
     }
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub(crate) struct TreeItem {
-    mode: String,
-    path: Path,
+    pub mode: String,
+    pub path: PathBuf,
     // hex string referencing tree (directory) or blob (file)
-    hash: String,
+    pub hash: String,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub(crate) struct Tree {
-    items: Vec<TreeItem>,
+    pub items: Vec<TreeItem>,
 }
 
 impl Tree {
     pub(crate) fn read(repo: &mut Repo, hash: &String) -> Result<Tree> {
         if let Some(tree) = repo.trees().read().get(hash) {
-            log::debug!("tree: {tree}");
-            Ok(tree)
+            log::debug!("tree: {tree:?}");
+            Ok(tree.clone())
         } else {
-            Err(HashNotFound{hash})
+            Err(anyhow!("{hash} not found"))
         }
     }
 
-    pub(crate) fn write(repo: &mut Repo, hash: &String, tree: &Tree) {
-        repo.trees().write().insert(hash, tree);
+    pub(crate) fn write(repo: &mut Repo, hash: &str, tree: &Tree) {
+        repo.trees().write().insert(hash.to_owned(), tree.clone());
     }
 }
